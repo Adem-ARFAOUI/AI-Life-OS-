@@ -209,8 +209,18 @@ const TWIN_SCHEMA = {
     risk: { type: "ARRAY", items: { type: "STRING" } },
   },
   required: [
-    "id", "title", "description", "score", "confidence", "salary", "time",
-    "difficulty", "effort", "timeline", "opportunity", "risk",
+    "id",
+    "title",
+    "description",
+    "score",
+    "confidence",
+    "salary",
+    "time",
+    "difficulty",
+    "effort",
+    "timeline",
+    "opportunity",
+    "risk",
   ],
 };
 
@@ -265,7 +275,10 @@ const PLAN_SCHEMA = {
         uncertaintyNotice: { type: "STRING" },
       },
       required: [
-        "recommendation", "confidence", "reasoning", "alternatives",
+        "recommendation",
+        "confidence",
+        "reasoning",
+        "alternatives",
         "uncertaintyNotice",
       ],
     },
@@ -290,12 +303,23 @@ const PLAN_SCHEMA = {
         },
       },
       required: [
-        "age", "budget", "experience", "riskTolerance", "confidence",
+        "age",
+        "budget",
+        "experience",
+        "riskTolerance",
+        "confidence",
         "scenarios",
       ],
     },
   },
-  required: ["meta", "futureTwins", "tradeoffs", "roadmap", "decision", "simulator"],
+  required: [
+    "meta",
+    "futureTwins",
+    "tradeoffs",
+    "roadmap",
+    "decision",
+    "simulator",
+  ],
 };
 
 // ---------------------------------------------------------------------
@@ -303,7 +327,8 @@ const PLAN_SCHEMA = {
 //    no matter what Gemini (or the fallback) actually returned.
 // ---------------------------------------------------------------------
 
-const toArray = (value) => (Array.isArray(value) ? value : value ? [String(value)] : []);
+const toArray = (value) =>
+  Array.isArray(value) ? value : value ? [String(value)] : [];
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -329,24 +354,29 @@ function sanitizePlan(raw, profile) {
       risk: toArray(t?.risk),
     }));
 
-  const tradeoffs = (Array.isArray(plan.tradeoffs) ? plan.tradeoffs : []).map((t) => ({
-    option: t?.option || "Option",
-    salary: clamp(toNumber(t?.salary, 50), 0, 100),
-    risk: clamp(toNumber(t?.risk, 50), 0, 100),
-    freedom: clamp(toNumber(t?.freedom, 50), 0, 100),
-    growth: clamp(toNumber(t?.growth, 50), 0, 100),
-  }));
+  const tradeoffs = (Array.isArray(plan.tradeoffs) ? plan.tradeoffs : []).map(
+    (t) => ({
+      option: t?.option || "Option",
+      salary: clamp(toNumber(t?.salary, 50), 0, 100),
+      risk: clamp(toNumber(t?.risk, 50), 0, 100),
+      freedom: clamp(toNumber(t?.freedom, 50), 0, 100),
+      growth: clamp(toNumber(t?.growth, 50), 0, 100),
+    }),
+  );
 
-  const roadmap = (Array.isArray(plan.roadmap) ? plan.roadmap : []).map((r) => ({
-    period: r?.period || "",
-    title: r?.title || "",
-    description: r?.description || "",
-    actions: toArray(r?.actions),
-    completed: Boolean(r?.completed),
-  }));
+  const roadmap = (Array.isArray(plan.roadmap) ? plan.roadmap : []).map(
+    (r) => ({
+      period: r?.period || "",
+      title: r?.title || "",
+      description: r?.description || "",
+      actions: toArray(r?.actions),
+      completed: Boolean(r?.completed),
+    }),
+  );
 
   const decision = {
-    recommendation: plan.decision?.recommendation || futureTwins[0]?.title || "",
+    recommendation:
+      plan.decision?.recommendation || futureTwins[0]?.title || "",
     confidence: clamp(toNumber(plan.decision?.confidence, 70), 0, 100),
     reasoning: toArray(plan.decision?.reasoning),
     alternatives: toArray(plan.decision?.alternatives),
@@ -359,11 +389,19 @@ function sanitizePlan(raw, profile) {
     age: toNumber(plan.simulator?.age, profile.age),
     budget: toNumber(plan.simulator?.budget, profile.budget),
     experience: clamp(toNumber(plan.simulator?.experience, 2), 0, 20),
-    riskTolerance: clamp(toNumber(plan.simulator?.riskTolerance, profile.riskTolerance), 0, 100),
-    confidence: clamp(toNumber(plan.simulator?.confidence, 70), 0, 100),
-    scenarios: (Array.isArray(plan.simulator?.scenarios) ? plan.simulator.scenarios : []).map(
-      (s) => ({ name: s?.name || "Scenario", score: clamp(toNumber(s?.score, 70), 0, 100) }),
+    riskTolerance: clamp(
+      toNumber(plan.simulator?.riskTolerance, profile.riskTolerance),
+      0,
+      100,
     ),
+    confidence: clamp(toNumber(plan.simulator?.confidence, 70), 0, 100),
+    scenarios: (Array.isArray(plan.simulator?.scenarios)
+      ? plan.simulator.scenarios
+      : []
+    ).map((s) => ({
+      name: s?.name || "Scenario",
+      score: clamp(toNumber(s?.score, 70), 0, 100),
+    })),
   };
 
   const meta = {
@@ -392,30 +430,59 @@ async function generateLifePlan(profile) {
   const prompt = buildMasterPrompt(profile);
 
   let response;
-  try {
-    response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: PLAN_SCHEMA,
-        temperature: 0.8,
-      },
-    });
-  } catch (err) {
-    throw new GeminiServiceError(`Gemini request failed: ${err.message}`, "REQUEST_FAILED");
+  let lastError;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: PLAN_SCHEMA,
+          temperature: 0.4,
+          maxOutputTokens: 4000,
+        },
+      });
+
+      break; // succès
+    } catch (err) {
+      lastError = err;
+      console.log(`[Gemini] Attempt ${attempt}/3 failed:`, err.message);
+      const isTemporaryError =
+        err.message?.includes("503") || err.message?.includes("UNAVAILABLE");
+      if (isTemporaryError && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+        continue;
+      }
+
+      break;
+    }
+  }
+
+  if (!response) {
+    throw new GeminiServiceError(
+      `Gemini request failed after 3 attempts: ${lastError?.message}`,
+      "REQUEST_FAILED",
+    );
   }
 
   const text = response?.text;
   if (!text) {
-    throw new GeminiServiceError("Gemini returned an empty response.", "EMPTY_RESPONSE");
+    throw new GeminiServiceError(
+      "Gemini returned an empty response.",
+      "EMPTY_RESPONSE",
+    );
   }
 
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new GeminiServiceError("Gemini response was not valid JSON.", "PARSE_FAILED");
+    throw new GeminiServiceError(
+      "Gemini response was not valid JSON.",
+      "PARSE_FAILED",
+    );
   }
 
   return sanitizePlan(parsed, profile);
@@ -447,12 +514,16 @@ function buildFallbackPlan(profile) {
       time: "1-3 years",
       difficulty: "Hard",
       effort: "High",
-      timeline: "Validate the idea in month 1-3, commit fully by month 6 if signals are positive.",
+      timeline:
+        "Validate the idea in month 1-3, commit fully by month 6 if signals are positive.",
       opportunity: [
         "Fastest route to your stated goal",
         "Highest learning curve and skill growth",
       ],
-      risk: ["Higher financial exposure", "Less predictable income in the short term"],
+      risk: [
+        "Higher financial exposure",
+        "Less predictable income in the short term",
+      ],
     },
     {
       id: 2,
@@ -464,7 +535,8 @@ function buildFallbackPlan(profile) {
       time: "2-4 years",
       difficulty: "Medium",
       effort: "Medium",
-      timeline: "Build foundational skills and a safety net over the first year before scaling up.",
+      timeline:
+        "Build foundational skills and a safety net over the first year before scaling up.",
       opportunity: ["Predictable progress", "Lower financial risk"],
       risk: ["Slower path to the end goal", "Possible opportunity cost"],
     },
@@ -478,9 +550,16 @@ function buildFallbackPlan(profile) {
       time: "1.5-3 years",
       difficulty: "Medium",
       effort: "Medium-High",
-      timeline: "Run both tracks in parallel for 6-12 months, then commit to whichever shows traction.",
-      opportunity: ["Keeps options open", "Reduces single-point-of-failure risk"],
-      risk: ["Requires strong time management", "Slower momentum on either track alone"],
+      timeline:
+        "Run both tracks in parallel for 6-12 months, then commit to whichever shows traction.",
+      opportunity: [
+        "Keeps options open",
+        "Reduces single-point-of-failure risk",
+      ],
+      risk: [
+        "Requires strong time management",
+        "Slower momentum on either track alone",
+      ],
     },
   ];
 
@@ -496,15 +575,67 @@ function buildFallbackPlan(profile) {
     },
     futureTwins,
     tradeoffs: [
-      { option: "Bold Path", salary: 70, risk: clamp(40 + riskFactor * 40, 0, 100), freedom: 90, growth: 90 },
-      { option: "Steady Path", salary: 75, risk: clamp(60 - riskFactor * 30, 0, 100), freedom: 45, growth: 60 },
+      {
+        option: "Bold Path",
+        salary: 70,
+        risk: clamp(40 + riskFactor * 40, 0, 100),
+        freedom: 90,
+        growth: 90,
+      },
+      {
+        option: "Steady Path",
+        salary: 75,
+        risk: clamp(60 - riskFactor * 30, 0, 100),
+        freedom: 45,
+        growth: 60,
+      },
       { option: "Hybrid Path", salary: 72, risk: 50, freedom: 65, growth: 75 },
     ],
     roadmap: [
-      { period: "Month 3", title: "Foundation", description: `Lay the groundwork for ${goalLabel}.`, actions: ["Clarify the specific outcome you want", "Identify the 1-2 biggest skill gaps", "Talk to 3 people already on this path"], completed: false },
-      { period: "Month 6", title: "Validation", description: "Test your direction with real evidence.", actions: ["Ship a small, concrete proof of progress", "Collect honest feedback", "Reassess budget and timeline"], completed: false },
-      { period: "Month 12", title: "Commitment", description: "Decide how far to lean in.", actions: ["Choose Bold, Steady or Hybrid based on results so far", "Set a 6-month milestone", "Build/strengthen your support network"], completed: false },
-      { period: "Month 24", title: "Scale or Pivot", description: "Double down on what's working.", actions: ["Review what changed in your situation", "Scale the path that's working", "Pivot early if the evidence says so"], completed: false },
+      {
+        period: "Month 3",
+        title: "Foundation",
+        description: `Lay the groundwork for ${goalLabel}.`,
+        actions: [
+          "Clarify the specific outcome you want",
+          "Identify the 1-2 biggest skill gaps",
+          "Talk to 3 people already on this path",
+        ],
+        completed: false,
+      },
+      {
+        period: "Month 6",
+        title: "Validation",
+        description: "Test your direction with real evidence.",
+        actions: [
+          "Ship a small, concrete proof of progress",
+          "Collect honest feedback",
+          "Reassess budget and timeline",
+        ],
+        completed: false,
+      },
+      {
+        period: "Month 12",
+        title: "Commitment",
+        description: "Decide how far to lean in.",
+        actions: [
+          "Choose Bold, Steady or Hybrid based on results so far",
+          "Set a 6-month milestone",
+          "Build/strengthen your support network",
+        ],
+        completed: false,
+      },
+      {
+        period: "Month 24",
+        title: "Scale or Pivot",
+        description: "Double down on what's working.",
+        actions: [
+          "Review what changed in your situation",
+          "Scale the path that's working",
+          "Pivot early if the evidence says so",
+        ],
+        completed: false,
+      },
     ],
     decision: {
       recommendation: best.title,
@@ -513,7 +644,9 @@ function buildFallbackPlan(profile) {
         `Best balance of score and risk for ${name || "this profile"} given the stated risk tolerance`,
         "Generated locally without live AI reasoning — confidence is intentionally capped",
       ],
-      alternatives: futureTwins.filter((t) => t.id !== best.id).map((t) => t.title),
+      alternatives: futureTwins
+        .filter((t) => t.id !== best.id)
+        .map((t) => t.title),
       uncertaintyNotice:
         "This recommendation comes from a simplified local fallback, not a full AI analysis. Re-run it once the AI service is available.",
     },
