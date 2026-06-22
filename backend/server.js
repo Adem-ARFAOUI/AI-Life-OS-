@@ -32,8 +32,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-const PORT = 5000;
-
 connectDB();
 const PORT = process.env.PORT || 5000;
 
